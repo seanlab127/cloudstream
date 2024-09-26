@@ -1,7 +1,10 @@
 package com.lagradost.cloudstream3.ui.player
 
 import android.annotation.SuppressLint
-import android.content.*
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.drawable.AnimatedImageDrawable
 import android.graphics.drawable.AnimatedVectorDrawable
 import android.media.metrics.PlaybackErrorEvent
@@ -45,8 +48,8 @@ import com.lagradost.cloudstream3.mvvm.normalSafeApiCall
 import com.lagradost.cloudstream3.syncproviders.AccountManager.Companion.unixTimeMs
 import com.lagradost.cloudstream3.ui.subtitles.SaveCaptionStyle
 import com.lagradost.cloudstream3.ui.subtitles.SubtitlesFragment
-import com.lagradost.cloudstream3.utils.AppUtils
-import com.lagradost.cloudstream3.utils.AppUtils.requestLocalAudioFocus
+import com.lagradost.cloudstream3.utils.AppContextUtils
+import com.lagradost.cloudstream3.utils.AppContextUtils.requestLocalAudioFocus
 import com.lagradost.cloudstream3.utils.DataStoreHelper
 import com.lagradost.cloudstream3.utils.EpisodeSkip
 import com.lagradost.cloudstream3.utils.UIHelper
@@ -217,7 +220,7 @@ abstract class AbstractPlayerFragment(
                             return
                         }
                         player.handleEvent(
-                            CSPlayerEvent.values()[intent.getIntExtra(
+                            CSPlayerEvent.entries[intent.getIntExtra(
                                 EXTRA_CONTROL_TYPE,
                                 0
                             )], source = PlayerEventSource.UI
@@ -259,7 +262,7 @@ abstract class AbstractPlayerFragment(
 
     private fun requestAudioFocus() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            activity?.requestLocalAudioFocus(AppUtils.getFocusRequest())
+            activity?.requestLocalAudioFocus(AppContextUtils.getFocusRequest())
         }
     }
 
@@ -442,6 +445,9 @@ abstract class AbstractPlayerFragment(
 
             is VideoEndedEvent -> {
                 context?.let { ctx ->
+                    // Resets subtitle delay on ended video
+                    player.setSubtitleOffset(0)
+
                     // Only play next episode if autoplay is on (default)
                     if (PreferenceManager.getDefaultSharedPreferences(ctx)
                             ?.getBoolean(
@@ -601,12 +607,12 @@ abstract class AbstractPlayerFragment(
     }
 
     fun nextResize() {
-        resizeMode = (resizeMode + 1) % PlayerResize.values().size
+        resizeMode = (resizeMode + 1) % PlayerResize.entries.size
         resize(resizeMode, true)
     }
 
     fun resize(resize: Int, showToast: Boolean) {
-        resize(PlayerResize.values()[resize], showToast)
+        resize(PlayerResize.entries[resize], showToast)
     }
 
     @SuppressLint("UnsafeOptInUsageError")

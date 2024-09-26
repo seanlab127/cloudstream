@@ -1,9 +1,30 @@
 package com.lagradost.cloudstream3.ui.player
 
+import android.net.Uri
+import com.lagradost.cloudstream3.TvType
 import com.lagradost.cloudstream3.amap
-import com.lagradost.cloudstream3.mvvm.normalSafeApiCall
-import com.lagradost.cloudstream3.utils.*
-import java.net.URI
+import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.ExtractorLinkType
+import com.lagradost.cloudstream3.utils.INFER_TYPE
+import com.lagradost.cloudstream3.utils.Qualities
+import com.lagradost.cloudstream3.utils.loadExtractor
+import com.lagradost.cloudstream3.utils.unshortenLinkSafe
+
+data class ExtractorUri(
+    val uri: Uri,
+    val name: String,
+
+    val basePath: String? = null,
+    val relativePath: String? = null,
+    val displayName: String? = null,
+
+    val id: Int? = null,
+    val parentId: Int? = null,
+    val episode: Int? = null,
+    val season: Int? = null,
+    val headerName: String? = null,
+    val tvType: TvType? = null,
+)
 
 /**
  * Used to open the player more easily with the LinkGenerator
@@ -19,6 +40,7 @@ class LinkGenerator(
     private val isM3u8: Boolean? = null
 ) : IGenerator {
     override val hasCache = false
+    override val canSkipLoading = true
 
     override fun getCurrentId(): Int? {
         return null
@@ -48,10 +70,11 @@ class LinkGenerator(
 
     override suspend fun generateLinks(
         clearCache: Boolean,
-        type: LoadType,
+        sourceTypes: Set<ExtractorLinkType>,
         callback: (Pair<ExtractorLink?, ExtractorUri?>) -> Unit,
         subtitleCallback: (SubtitleData) -> Unit,
-        offset: Int
+        offset: Int,
+        isCasting: Boolean
     ): Boolean {
         links.amap { link ->
             if (!extract || !loadExtractor(link.url, referer, {

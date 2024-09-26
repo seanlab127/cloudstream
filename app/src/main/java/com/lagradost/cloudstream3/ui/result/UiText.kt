@@ -1,6 +1,7 @@
 package com.lagradost.cloudstream3.ui.result
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.util.Log
 import android.widget.ImageView
 import android.widget.TextView
@@ -9,7 +10,7 @@ import androidx.annotation.StringRes
 import androidx.core.view.isGone
 import androidx.core.view.isVisible
 import com.lagradost.cloudstream3.mvvm.logError
-import com.lagradost.cloudstream3.utils.AppUtils.html
+import com.lagradost.cloudstream3.utils.AppContextUtils.html
 import com.lagradost.cloudstream3.utils.UIHelper.setImage
 
 sealed class UiText {
@@ -19,6 +20,13 @@ sealed class UiText {
 
     data class DynamicString(val value: String) : UiText() {
         override fun toString(): String = value
+
+        override fun equals(other: Any?): Boolean {
+            if (other !is DynamicString) return false
+            return this.value == other.value
+        }
+
+        override fun hashCode(): Int = value.hashCode()
     }
 
     class StringResource(
@@ -27,6 +35,16 @@ sealed class UiText {
     ) : UiText() {
         override fun toString(): String =
             "resId = $resId\nargs = ${args.toList().map { "(${it::class} = $it)" }}"
+        override fun equals(other: Any?): Boolean {
+            if (other !is StringResource) return false
+            return this.resId == other.resId && this.args == other.args
+        }
+
+        override fun hashCode(): Int {
+            var result = resId
+            result = 31 * result + args.hashCode()
+            return result
+        }
     }
 
     fun asStringNull(context: Context?): String? {
@@ -67,12 +85,14 @@ sealed class UiImage {
     ) : UiImage()
 
     data class Drawable(@DrawableRes val resId: Int) : UiImage()
+    data class Bitmap(val bitmap: android.graphics.Bitmap) : UiImage()
 }
 
 fun ImageView?.setImage(value: UiImage?, fadeIn: Boolean = true) {
     when (value) {
         is UiImage.Image -> setImageImage(value, fadeIn)
         is UiImage.Drawable -> setImageDrawable(value)
+        is UiImage.Bitmap -> setImageBitmap(value)
         null -> {
             this?.isVisible = false
         }
@@ -88,6 +108,12 @@ fun ImageView?.setImageDrawable(value: UiImage.Drawable) {
     if (this == null) return
     this.isVisible = true
     this.setImage(UiImage.Drawable(value.resId))
+}
+
+fun ImageView?.setImageBitmap(value: UiImage.Bitmap) {
+    if (this == null) return
+    this.isVisible = true
+    this.setImageBitmap(value.bitmap)
 }
 
 @JvmName("imgNull")
@@ -110,6 +136,10 @@ fun img(
 
 fun img(@DrawableRes drawable: Int): UiImage {
     return UiImage.Drawable(drawable)
+}
+
+fun img(bitmap: Bitmap): UiImage {
+    return UiImage.Bitmap(bitmap)
 }
 
 fun txt(value: String): UiText {

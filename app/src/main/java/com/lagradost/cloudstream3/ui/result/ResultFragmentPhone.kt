@@ -2,9 +2,6 @@ package com.lagradost.cloudstream3.ui.result
 
 import android.annotation.SuppressLint
 import android.app.Dialog
-import android.content.ClipData
-import android.content.ClipboardManager
-import android.content.Context
 import android.content.Intent
 import android.content.res.ColorStateList
 import android.graphics.Rect
@@ -26,14 +23,13 @@ import androidx.core.widget.NestedScrollView
 import androidx.core.widget.doOnTextChanged
 import androidx.lifecycle.ViewModelProvider
 import com.discord.panels.OverlappingPanelsLayout
+import com.discord.panels.PanelState
 import com.discord.panels.PanelsChildGestureRegionObserver
 import com.google.android.gms.cast.framework.CastButtonFactory
 import com.google.android.gms.cast.framework.CastContext
 import com.google.android.gms.cast.framework.CastState
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.lagradost.cloudstream3.APIHolder
-import com.lagradost.cloudstream3.APIHolder.updateHasTrailers
-import com.lagradost.cloudstream3.CommonActivity
 import com.lagradost.cloudstream3.CommonActivity.showToast
 import com.lagradost.cloudstream3.DubStatus
 import com.lagradost.cloudstream3.LoadResponse
@@ -61,17 +57,18 @@ import com.lagradost.cloudstream3.ui.result.ResultFragment.getStoredData
 import com.lagradost.cloudstream3.ui.result.ResultFragment.updateUIEvent
 import com.lagradost.cloudstream3.ui.search.SearchAdapter
 import com.lagradost.cloudstream3.ui.search.SearchHelper
-import com.lagradost.cloudstream3.utils.AppUtils.getNameFull
-import com.lagradost.cloudstream3.utils.AppUtils.html
-import com.lagradost.cloudstream3.utils.AppUtils.isCastApiAvailable
-import com.lagradost.cloudstream3.utils.AppUtils.loadCache
-import com.lagradost.cloudstream3.utils.AppUtils.openBrowser
+import com.lagradost.cloudstream3.utils.AppContextUtils.getNameFull
+import com.lagradost.cloudstream3.utils.AppContextUtils.isCastApiAvailable
+import com.lagradost.cloudstream3.utils.AppContextUtils.loadCache
+import com.lagradost.cloudstream3.utils.AppContextUtils.openBrowser
+import com.lagradost.cloudstream3.utils.AppContextUtils.updateHasTrailers
+import com.lagradost.cloudstream3.utils.BatteryOptimizationChecker.openBatteryOptimizationSettings
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.SingleSelectionHelper.showBottomDialog
 import com.lagradost.cloudstream3.utils.SingleSelectionHelper.showBottomDialogInstant
-import com.lagradost.cloudstream3.utils.SingleSelectionHelper.showBottomDialogText
 import com.lagradost.cloudstream3.utils.SingleSelectionHelper.showDialog
 import com.lagradost.cloudstream3.utils.UIHelper
+import com.lagradost.cloudstream3.utils.UIHelper.clipboardHelper
 import com.lagradost.cloudstream3.utils.UIHelper.colorFromAttribute
 import com.lagradost.cloudstream3.utils.UIHelper.dismissSafe
 import com.lagradost.cloudstream3.utils.UIHelper.hideKeyboard
@@ -82,11 +79,12 @@ import com.lagradost.cloudstream3.utils.UIHelper.setImage
 import com.lagradost.cloudstream3.utils.VideoDownloadHelper
 
 open class ResultFragmentPhone : FullScreenPlayer() {
-    private val gestureRegionsListener = object : PanelsChildGestureRegionObserver.GestureRegionsListener {
-        override fun onGestureRegionsUpdate(gestureRegions: List<Rect>) {
-            binding?.resultOverlappingPanels?.setChildGestureRegions(gestureRegions)
+    private val gestureRegionsListener =
+        object : PanelsChildGestureRegionObserver.GestureRegionsListener {
+            override fun onGestureRegionsUpdate(gestureRegions: List<Rect>) {
+                binding?.resultOverlappingPanels?.setChildGestureRegions(gestureRegions)
+            }
         }
-    }
 
     protected lateinit var viewModel: ResultViewModel2
     protected lateinit var syncModel: SyncViewModel
@@ -119,6 +117,14 @@ open class ResultFragmentPhone : FullScreenPlayer() {
         }
 
         return root
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        PanelsChildGestureRegionObserver.Provider.get().apply {
+            resultBinding?.resultCastItems?.let { register(it) }
+        }
     }
 
     var currentTrailers: List<ExtractorLink> = emptyList()
@@ -189,8 +195,6 @@ open class ResultFragmentPhone : FullScreenPlayer() {
             }
             binding?.resultFullscreenHolder?.isVisible = !isSuccess && isFullScreenPlayer
         }
-
-
         //player_view?.apply {
         //alpha = 0.0f
         //ObjectAnimator.ofFloat(player_view, "alpha", 1f).apply {
@@ -204,9 +208,7 @@ open class ResultFragmentPhone : FullScreenPlayer() {
         //    fillAfter = true
         //}
         //startAnimation(fadeIn)
-        // }
-
-
+        //}
     }
 
     private fun setTrailers(trailers: List<ExtractorLink>?) {
@@ -217,9 +219,6 @@ open class ResultFragmentPhone : FullScreenPlayer() {
     }
 
     override fun onDestroyView() {
-
-        //somehow this still leaks and I dont know why????
-        // todo look at https://github.com/discord/OverlappingPanels/blob/70b4a7cf43c6771873b1e091029d332896d41a1a/sample_app/src/main/java/com/discord/sampleapp/MainActivity.kt
         PanelsChildGestureRegionObserver.Provider.get().let { obs ->
             resultBinding?.resultCastItems?.let {
                 obs.unregister(it)
@@ -336,14 +335,18 @@ open class ResultFragmentPhone : FullScreenPlayer() {
         syncModel.addFromUrl(storedData.url)
         val api = APIHolder.getApiFromNameNull(storedData.apiName)
 
-        PanelsChildGestureRegionObserver.Provider.get().apply {
-            resultBinding?.resultCastItems?.let {
-                register(it)
+        // This may not be 100% reliable, and may delay for small period
+        // before resultCastItems will be scrollable again, but this does work
+        // most of the time.
+        binding?.resultOverlappingPanels?.registerEndPanelStateListeners(
+            object : OverlappingPanelsLayout.PanelStateListener {
+                override fun onPanelStateChange(panelState: PanelState) {
+                    PanelsChildGestureRegionObserver.Provider.get().apply {
+                        resultBinding?.resultCastItems?.let { register(it) }
+                    }
+                }
             }
-            addGestureRegionsUpdateListener(gestureRegionsListener)
-        }
-
-
+        )
 
         // ===== ===== =====
 
@@ -438,17 +441,18 @@ open class ResultFragmentPhone : FullScreenPlayer() {
                     if (newStatus == null) return@toggleSubscriptionStatus
 
                     val message = if (newStatus) {
-                            // Kinda icky to have this here, but it works.
-                            SubscriptionWorkManager.enqueuePeriodicWork(context)
-                            R.string.subscription_new
-                        } else {
-                            R.string.subscription_deleted
-                        }
+                        // Kinda icky to have this here, but it works.
+                        SubscriptionWorkManager.enqueuePeriodicWork(context)
+                        R.string.subscription_new
+                    } else {
+                        R.string.subscription_deleted
+                    }
 
-                        val name = (viewModel.page.value as? Resource.Success)?.value?.title
-                            ?: txt(R.string.no_data).asStringNull(context) ?: ""
-                        CommonActivity.showToast(txt(message, name), Toast.LENGTH_SHORT)
+                    val name = (viewModel.page.value as? Resource.Success)?.value?.title
+                        ?: txt(R.string.no_data).asStringNull(context) ?: ""
+                    showToast(txt(message, name), Toast.LENGTH_SHORT)
                 }
+                context?.let { openBatteryOptimizationSettings(it) }
             }
             resultFavorite.setOnClickListener {
                 viewModel.toggleFavoriteStatus(context) { newStatus: Boolean? ->
@@ -462,7 +466,7 @@ open class ResultFragmentPhone : FullScreenPlayer() {
 
                     val name = (viewModel.page.value as? Resource.Success)?.value?.title
                         ?: txt(R.string.no_data).asStringNull(context) ?: ""
-                    CommonActivity.showToast(txt(message, name), Toast.LENGTH_SHORT)
+                    showToast(txt(message, name), Toast.LENGTH_SHORT)
                 }
             }
             mediaRouteButton.apply {
@@ -470,7 +474,7 @@ open class ResultFragmentPhone : FullScreenPlayer() {
                 alpha = if (chromecastSupport) 1f else 0.3f
                 if (!chromecastSupport) {
                     setOnClickListener {
-                        CommonActivity.showToast(
+                        showToast(
                             R.string.no_chromecast_support_toast,
                             Toast.LENGTH_LONG
                         )
@@ -480,8 +484,16 @@ open class ResultFragmentPhone : FullScreenPlayer() {
                     if (act.isCastApiAvailable()) {
                         try {
                             CastButtonFactory.setUpMediaRouteButton(act, this)
-                            val castContext = CastContext.getSharedInstance(act.applicationContext)
-                            isGone = castContext.castState == CastState.NO_DEVICES_AVAILABLE
+                            CastContext.getSharedInstance(act.applicationContext) {
+                                it.run()
+                            }.addOnCompleteListener {
+                                isGone = if (it.isSuccessful) {
+                                    it.result.castState == CastState.NO_DEVICES_AVAILABLE
+                                } else {
+                                    true
+                                }
+
+                            }
                             // this shit leaks for some reason
                             //castContext.addCastStateListener { state ->
                             //    media_route_button?.isGone = state == CastState.NO_DEVICES_AVAILABLE
@@ -633,18 +645,20 @@ open class ResultFragmentPhone : FullScreenPlayer() {
                     }
                     downloadButton.setDefaultClickListener(
                         VideoDownloadHelper.DownloadEpisodeCached(
-                            ep.name,
-                            ep.poster,
-                            0,
-                            null,
-                            ep.id,
-                            ep.id,
-                            null,
-                            null,
-                            System.currentTimeMillis(),
+                            name = ep.name,
+                            poster = ep.poster,
+                            episode = 0,
+                            season = null,
+                            id = ep.id,
+                            parentId = ep.id,
+                            rating = null,
+                            description = null,
+                            cacheTime = System.currentTimeMillis(),
                         ),
                         null
                     ) { click ->
+                        context?.let { openBatteryOptimizationSettings(it) }
+
                         when (click.action) {
                             DOWNLOAD_ACTION_DOWNLOAD -> {
                                 viewModel.handleAction(
@@ -671,6 +685,9 @@ open class ResultFragmentPhone : FullScreenPlayer() {
         observe(viewModel.page) { data ->
             if (data == null) return@observe
             resultBinding?.apply {
+                PanelsChildGestureRegionObserver.Provider.get().apply {
+                    register(resultCastItems)
+                }
                 (data as? Resource.Success)?.value?.let { d ->
                     resultVpn.setText(d.vpnText)
                     resultInfo.setText(d.metaText)
@@ -681,20 +698,22 @@ open class ResultFragmentPhone : FullScreenPlayer() {
                     resultMetaYear.setText(d.yearText)
                     resultMetaDuration.setText(d.durationText)
                     resultMetaRating.setText(d.ratingText)
+                    resultMetaStatus.setText(d.onGoingText)
                     resultMetaContentRating.setText(d.contentRatingText)
                     resultCastText.setText(d.actorsText)
                     resultNextAiring.setText(d.nextAiringEpisode)
                     resultNextAiringTime.setText(d.nextAiringDate)
                     resultPoster.setImage(d.posterImage)
                     resultPosterBackground.setImage(d.posterBackgroundImage)
-                    resultDescription.setTextHtml(d.plotText)
-                    resultDescription.setOnClickListener {
-                        activity?.let { activity ->
-                            activity.showBottomDialogText(
-                                d.titleText.asString(activity),
-                                d.plotText.asString(activity).html(),
-                                {}
-                            )
+
+                    var isExpanded = false
+                    resultDescription.apply {
+                        setTextHtml(d.plotText)
+                        setOnClickListener {
+                            isExpanded = !isExpanded
+                            maxLines = if (isExpanded) {
+                                Integer.MAX_VALUE
+                            } else 10
                         }
                     }
 
@@ -757,14 +776,8 @@ open class ResultFragmentPhone : FullScreenPlayer() {
                 resultReloadConnectionOpenInBrowser.isVisible = data is Resource.Failure
 
                 resultTitle.setOnLongClickListener {
-                        val titleToCopy = resultTitle.text
-                        val clipboardManager =
-                            activity?.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager?
-                        clipboardManager?.setPrimaryClip(ClipData.newPlainText("Title", titleToCopy))
-                        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.S_V2) {
-                            showToast(R.string.copyTitle, Toast.LENGTH_SHORT)
-                        }
-                        return@setOnLongClickListener true
+                    clipboardHelper(txt(R.string.title), resultTitle.text)
+                    true
                 }
             }
         }
@@ -900,14 +913,6 @@ open class ResultFragmentPhone : FullScreenPlayer() {
         observe(viewModel.recommendations) { recommendations ->
             setRecommendations(recommendations, null)
         }
-        observe(viewModel.episodeSynopsis) { description ->
-            activity?.let { activity ->
-                activity.showBottomDialogText(
-                    activity.getString(R.string.synopsis),
-                    description.html()
-                ) { viewModel.releaseEpisodeSynopsis() }
-            }
-        }
         context?.let { ctx ->
             val arrayAdapter = ArrayAdapter<String>(ctx, R.layout.sort_bottom_single_choice)
             /*
@@ -978,12 +983,12 @@ open class ResultFragmentPhone : FullScreenPlayer() {
 
                 setOnClickListener { fab ->
                     activity?.showBottomDialog(
-                        WatchType.values().map { fab.context.getString(it.stringRes) }.toList(),
+                        WatchType.entries.map { fab.context.getString(it.stringRes) }.toList(),
                         watchType.ordinal,
                         fab.context.getString(R.string.action_add_to_bookmarks),
                         showApply = false,
                         {}) {
-                        viewModel.updateWatchStatus(WatchType.values()[it], context)
+                        viewModel.updateWatchStatus(WatchType.entries[it], context)
                     }
                 }
             }
@@ -1063,7 +1068,7 @@ open class ResultFragmentPhone : FullScreenPlayer() {
                                 text?.asStringNull(ctx) ?: return@mapNotNull null
                             )
                         }) {
-                        viewModel.changeDubStatus(DubStatus.values()[itemId])
+                        viewModel.changeDubStatus(DubStatus.entries[itemId])
                     }
                 }
             }
@@ -1120,7 +1125,8 @@ open class ResultFragmentPhone : FullScreenPlayer() {
 
     override fun onPause() {
         super.onPause()
-        PanelsChildGestureRegionObserver.Provider.get().addGestureRegionsUpdateListener(gestureRegionsListener)
+        PanelsChildGestureRegionObserver.Provider.get()
+            .addGestureRegionsUpdateListener(gestureRegionsListener)
     }
 
     private fun setRecommendations(rec: List<SearchResponse>?, validApiName: String?) {

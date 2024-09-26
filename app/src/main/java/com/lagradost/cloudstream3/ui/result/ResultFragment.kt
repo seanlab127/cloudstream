@@ -3,12 +3,12 @@ package com.lagradost.cloudstream3.ui.result
 import android.os.Bundle
 import androidx.fragment.app.Fragment
 import androidx.preference.PreferenceManager
-import com.lagradost.cloudstream3.APIHolder.getApiDubstatusSettings
 import com.lagradost.cloudstream3.DubStatus
 import com.lagradost.cloudstream3.R
 import com.lagradost.cloudstream3.SearchResponse
 import com.lagradost.cloudstream3.TvType
 import com.lagradost.cloudstream3.ui.result.EpisodeAdapter.Companion.getPlayerAction
+import com.lagradost.cloudstream3.utils.AppContextUtils.getApiDubstatusSettings
 import com.lagradost.cloudstream3.utils.DataStoreHelper
 import com.lagradost.cloudstream3.utils.DataStoreHelper.getVideoWatchState
 import com.lagradost.cloudstream3.utils.DataStoreHelper.getViewPos
@@ -50,6 +50,8 @@ data class ResultEpisode(
     val videoWatchState: VideoWatchState,
     /** Sum of all previous season episode counts + episode */
     val totalEpisodeIndex: Int? = null,
+    val airDate: Long? = null,
+    val runTime: Int? = null,
 )
 
 fun ResultEpisode.getRealPosition(): Long {
@@ -85,6 +87,8 @@ fun buildResultEpisode(
     tvType: TvType,
     parentId: Int,
     totalEpisodeIndex: Int? = null,
+    airDate: Long? = null,
+    runTime: Int? = null,
 ): ResultEpisode {
     val posDur = getViewPos(id)
     val videoWatchState = getVideoWatchState(id) ?: VideoWatchState.None
@@ -107,7 +111,9 @@ fun buildResultEpisode(
         tvType,
         parentId,
         videoWatchState,
-        totalEpisodeIndex
+        totalEpisodeIndex,
+        airDate,
+        runTime,
     )
 }
 

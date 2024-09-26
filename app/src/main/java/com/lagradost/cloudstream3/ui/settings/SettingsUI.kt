@@ -9,11 +9,11 @@ import com.lagradost.cloudstream3.R
 import com.lagradost.cloudstream3.SearchQuality
 import com.lagradost.cloudstream3.mvvm.logError
 import com.lagradost.cloudstream3.ui.search.SearchResultBuilder
+import com.lagradost.cloudstream3.ui.settings.Globals.updateTv
 import com.lagradost.cloudstream3.ui.settings.SettingsFragment.Companion.getPref
 import com.lagradost.cloudstream3.ui.settings.SettingsFragment.Companion.setPaddingBottom
 import com.lagradost.cloudstream3.ui.settings.SettingsFragment.Companion.setToolBarScrollFlags
 import com.lagradost.cloudstream3.ui.settings.SettingsFragment.Companion.setUpToolbar
-import com.lagradost.cloudstream3.ui.settings.SettingsFragment.Companion.updateTv
 import com.lagradost.cloudstream3.utils.SingleSelectionHelper.showBottomDialog
 import com.lagradost.cloudstream3.utils.SingleSelectionHelper.showDialog
 import com.lagradost.cloudstream3.utils.SingleSelectionHelper.showMultiDialog
@@ -88,10 +88,9 @@ class SettingsUI : PreferenceFragmentCompat() {
         getPref(R.string.app_theme_key)?.setOnPreferenceClickListener {
             val prefNames = resources.getStringArray(R.array.themes_names).toMutableList()
             val prefValues = resources.getStringArray(R.array.themes_names_values).toMutableList()
-
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) { // remove monet on android 11 and less
+            val removeIncompatible = { text: String ->
                 val toRemove = prefValues
-                    .mapIndexed { idx, s -> if (s.startsWith("Monet")) idx else null }
+                    .mapIndexed { idx, s -> if (s.startsWith(text)) idx else null }
                     .filterNotNull()
                 var offset = 0
                 toRemove.forEach { idx ->
@@ -99,6 +98,12 @@ class SettingsUI : PreferenceFragmentCompat() {
                     prefValues.removeAt(idx - offset)
                     offset += 1
                 }
+            }
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) { // remove monet on android 11 and less
+                removeIncompatible("Monet")
+            }
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) { // Remove system on android 9 and less
+                removeIncompatible("System")
             }
 
             val currentLayout =
@@ -123,7 +128,8 @@ class SettingsUI : PreferenceFragmentCompat() {
         }
         getPref(R.string.primary_color_key)?.setOnPreferenceClickListener {
             val prefNames = resources.getStringArray(R.array.themes_overlay_names).toMutableList()
-            val prefValues = resources.getStringArray(R.array.themes_overlay_names_values).toMutableList()
+            val prefValues =
+                resources.getStringArray(R.array.themes_overlay_names_values).toMutableList()
 
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) { // remove monet on android 11 and less
                 val toRemove = prefValues

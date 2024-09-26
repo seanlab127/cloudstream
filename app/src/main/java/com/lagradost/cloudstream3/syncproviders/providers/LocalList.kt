@@ -8,7 +8,8 @@ import com.lagradost.cloudstream3.syncproviders.SyncIdName
 import com.lagradost.cloudstream3.ui.WatchType
 import com.lagradost.cloudstream3.ui.library.ListSorting
 import com.lagradost.cloudstream3.ui.result.txt
-import com.lagradost.cloudstream3.ui.settings.SettingsFragment.Companion.isTrueTvSettings
+import com.lagradost.cloudstream3.ui.settings.Globals.TV
+import com.lagradost.cloudstream3.ui.settings.Globals.isLayout
 import com.lagradost.cloudstream3.utils.Coroutines.ioWork
 import com.lagradost.cloudstream3.utils.DataStoreHelper.getAllFavorites
 import com.lagradost.cloudstream3.utils.DataStoreHelper.getAllSubscriptions
@@ -20,6 +21,7 @@ class LocalList : SyncAPI {
     override val name = "Local"
     override val icon: Int = R.drawable.ic_baseline_storage_24
     override val requiresLogin = false
+    override val supportDeviceAuth = false
     override val createAccountUrl: Nothing? = null
     override val idPrefix = "local"
     override var requireLibraryRefresh = true
@@ -71,9 +73,9 @@ class LocalList : SyncAPI {
         }?.distinctBy { it.first } ?: return null
 
         val list = ioWork {
-            val isTrueTv = isTrueTvSettings()
+            val isTrueTv = isLayout(TV)
 
-            val baseMap = WatchType.values().filter { it != WatchType.NONE }.associate {
+            val baseMap = WatchType.entries.filter { it != WatchType.NONE }.associate {
                 // None is not something to display
                 it.stringRes to emptyList<SyncAPI.LibraryItem>()
             } + mapOf(
@@ -117,8 +119,11 @@ class LocalList : SyncAPI {
                 ListSorting.AlphabeticalZ,
                 ListSorting.UpdatedNew,
                 ListSorting.UpdatedOld,
+                ListSorting.ReleaseDateNew,
+                ListSorting.ReleaseDateOld,
 //                ListSorting.RatingHigh,
 //                ListSorting.RatingLow,
+
             )
         )
     }

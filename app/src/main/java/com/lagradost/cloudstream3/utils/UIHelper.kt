@@ -5,6 +5,8 @@ import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.AppOpsManager
 import android.app.Dialog
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.pm.PackageManager
 import android.content.res.Configuration
@@ -14,12 +16,17 @@ import android.graphics.Color
 import android.graphics.drawable.Drawable
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.os.TransactionTooLargeException
+import android.util.Log
 import android.view.*
 import android.view.ViewGroup.MarginLayoutParams
 import android.view.inputmethod.InputMethodManager
 import android.widget.ImageView
 import android.widget.ListAdapter
 import android.widget.ListView
+import android.widget.Toast.LENGTH_LONG
 import androidx.annotation.AttrRes
 import androidx.annotation.ColorInt
 import androidx.annotation.DrawableRes
@@ -30,18 +37,17 @@ import androidx.appcompat.view.menu.MenuBuilder
 import androidx.appcompat.widget.PopupMenu
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.core.content.getSystemService
 import androidx.core.graphics.alpha
 import androidx.core.graphics.blue
 import androidx.core.graphics.drawable.toBitmapOrNull
 import androidx.core.graphics.green
 import androidx.core.graphics.red
-import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsControllerCompat
 import androidx.core.view.marginBottom
 import androidx.core.view.marginLeft
 import androidx.core.view.marginRight
 import androidx.core.view.marginTop
+import androidx.core.view.updateLayoutParams
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentActivity
 import androidx.navigation.fragment.NavHostFragment
@@ -55,19 +61,23 @@ import com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions
 import com.bumptech.glide.request.RequestListener
 import com.bumptech.glide.request.RequestOptions.bitmapTransform
 import com.bumptech.glide.request.target.Target
+import com.google.android.material.appbar.AppBarLayout
 import com.google.android.material.chip.Chip
 import com.google.android.material.chip.ChipDrawable
 import com.google.android.material.chip.ChipGroup
+import com.lagradost.cloudstream3.AcraApplication.Companion.context
 import com.lagradost.cloudstream3.CommonActivity.activity
-import com.lagradost.cloudstream3.MainActivity
+import com.lagradost.cloudstream3.CommonActivity.showToast
 import com.lagradost.cloudstream3.R
 import com.lagradost.cloudstream3.mvvm.logError
 import com.lagradost.cloudstream3.ui.result.UiImage
-import com.lagradost.cloudstream3.ui.settings.SettingsFragment.Companion.isEmulatorSettings
-import com.lagradost.cloudstream3.ui.settings.SettingsFragment.Companion.isTvSettings
+import com.lagradost.cloudstream3.ui.result.UiText
+import com.lagradost.cloudstream3.ui.result.txt
+import com.lagradost.cloudstream3.ui.settings.Globals
+import com.lagradost.cloudstream3.ui.settings.Globals.EMULATOR
+import com.lagradost.cloudstream3.ui.settings.Globals.isLayout
 import jp.wasabeef.glide.transformations.BlurTransformation
 import kotlin.math.roundToInt
-
 
 object UIHelper {
     val Int.toPx: Int get() = (this * Resources.getSystem().displayMetrics.density).toInt()
@@ -123,6 +133,35 @@ object UIHelper {
         )
     }
 
+    fun clipboardHelper(label: UiText, text: CharSequence) {
+        val ctx = context ?: return
+        try {
+            ctx.let {
+                val clip = ClipData.newPlainText(label.asString(ctx), text)
+                val labelSuffix = txt(R.string.toast_copied).asString(ctx)
+                ctx.getSystemService<ClipboardManager>()?.setPrimaryClip(clip)
+
+                if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.S_V2) {
+                    showToast("${label.asString(ctx)} $labelSuffix")
+                }
+            }
+        } catch (t: Throwable) {
+            Log.e("ClipboardService", "$t")
+            when (t) {
+                is SecurityException -> {
+                    showToast(R.string.clipboard_permission_error)
+                }
+
+                is TransactionTooLargeException -> {
+                    showToast(R.string.clipboard_too_large)
+                }
+
+                else -> {
+                    showToast(R.string.clipboard_unknown_error, LENGTH_LONG)
+                }
+            }
+        }
+    }
 
     /**
      * Sets ListView height dynamically based on the height of the items.
@@ -170,6 +209,14 @@ object UIHelper {
         activity?.window?.decorView?.clearFocus()
         view?.let {
             hideKeyboard(it)
+        }
+    }
+
+    fun View?.setAppBarNoScrollFlagsOnTV() {
+        if (isLayout(Globals.TV or EMULATOR)) {
+            this?.updateLayoutParams<AppBarLayout.LayoutParams> {
+                scrollFlags = AppBarLayout.LayoutParams.SCROLL_FLAG_NO_SCROLL
+            }
         }
     }
 
@@ -430,11 +477,27 @@ object UIHelper {
     }
 
     fun FragmentActivity.popCurrentPage() {
-        this.onBackPressedDispatcher.onBackPressed()
+        // Post the back press action to the main thread handler to ensure it executes
+        // after any currently pending UI updates or fragment transactions.
+        Handler(Looper.getMainLooper()).post {
+            // Check if the FragmentManager state is saved. If it is, we cannot perform
+            // fragment transactions safely because the state may be inconsistent.
+            if (!supportFragmentManager.isStateSaved) {
+                // If the state is not saved, it's safe to perform the back press action.
+                this.onBackPressedDispatcher.onBackPressed()
+            } else {
+                // If the state is saved, retry the back press action after a slight delay.
+                // This gives the FragmentManager time to complete any ongoing state-saving
+                // operations or transactions, ensuring that we do not encounter an IllegalStateException.
+                Handler(Looper.getMainLooper()).postDelayed({
+                    this.onBackPressedDispatcher.onBackPressed()
+                }, 100)
+            }
+        }
     }
 
     fun Context.getStatusBarHeight(): Int {
-        if (isTvSettings()) {
+        if (isLayout(Globals.TV or EMULATOR)) {
             return 0
         }
 
@@ -490,7 +553,7 @@ object UIHelper {
         return result
     }
 
-    fun Context?.IsBottomLayout(): Boolean {
+    fun Context?.isBottomLayout(): Boolean {
         if (this == null) return true
         val settingsManager = PreferenceManager.getDefaultSharedPreferences(this)
         return settingsManager.getBoolean(getString(R.string.bottom_title_key), true)
@@ -532,12 +595,11 @@ object UIHelper {
             WindowInsetsControllerCompat(window, View(this)).show(WindowInsetsCompat.Type.systemBars())
 
         } else {*/ /** WINDOW COMPAT IS BUGGY DUE TO FU*KED UP PLAYER AND TRAILERS **/
-            Suppress("DEPRECATION")
             window.decorView.systemUiVisibility =
                 (View.SYSTEM_UI_FLAG_LAYOUT_STABLE or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN)
         //}
 
-        changeStatusBarState(isEmulatorSettings())
+        changeStatusBarState(isLayout(EMULATOR))
     }
 
     fun Context.shouldShowPIPMode(isInPlayer: Boolean): Boolean {

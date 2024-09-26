@@ -17,16 +17,14 @@ import androidx.core.view.isGone
 import androidx.core.view.isVisible
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
-import androidx.lifecycle.*
 import androidx.preference.PreferenceManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.bottomsheet.BottomSheetBehavior
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.chip.Chip
+import com.lagradost.api.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.APIHolder.apis
-import com.lagradost.cloudstream3.APIHolder.filterProviderByPreferredMedia
-import com.lagradost.cloudstream3.APIHolder.getApiProviderLangSettings
 import com.lagradost.cloudstream3.CommonActivity.showToast
 import com.lagradost.cloudstream3.databinding.FragmentHomeBinding
 import com.lagradost.cloudstream3.databinding.HomeEpisodesExpandedBinding
@@ -42,13 +40,17 @@ import com.lagradost.cloudstream3.ui.account.AccountHelper.showAccountSelectLine
 import com.lagradost.cloudstream3.ui.result.txt
 import com.lagradost.cloudstream3.ui.search.*
 import com.lagradost.cloudstream3.ui.search.SearchHelper.handleSearchClickCallback
-import com.lagradost.cloudstream3.ui.settings.SettingsFragment.Companion.isTrueTvSettings
-import com.lagradost.cloudstream3.ui.settings.SettingsFragment.Companion.isTvSettings
-import com.lagradost.cloudstream3.utils.AppUtils.isRecyclerScrollable
-import com.lagradost.cloudstream3.utils.AppUtils.loadSearchResult
-import com.lagradost.cloudstream3.utils.AppUtils.ownHide
-import com.lagradost.cloudstream3.utils.AppUtils.ownShow
-import com.lagradost.cloudstream3.utils.AppUtils.setDefaultFocus
+import com.lagradost.cloudstream3.ui.settings.Globals.EMULATOR
+import com.lagradost.cloudstream3.ui.settings.Globals.PHONE
+import com.lagradost.cloudstream3.ui.settings.Globals.TV
+import com.lagradost.cloudstream3.ui.settings.Globals.isLayout
+import com.lagradost.cloudstream3.utils.AppContextUtils.filterProviderByPreferredMedia
+import com.lagradost.cloudstream3.utils.AppContextUtils.getApiProviderLangSettings
+import com.lagradost.cloudstream3.utils.AppContextUtils.isRecyclerScrollable
+import com.lagradost.cloudstream3.utils.AppContextUtils.loadSearchResult
+import com.lagradost.cloudstream3.utils.AppContextUtils.ownHide
+import com.lagradost.cloudstream3.utils.AppContextUtils.ownShow
+import com.lagradost.cloudstream3.utils.AppContextUtils.setDefaultFocus
 import com.lagradost.cloudstream3.utils.Coroutines.ioSafe
 import com.lagradost.cloudstream3.utils.DataStoreHelper
 import com.lagradost.cloudstream3.utils.Event
@@ -56,6 +58,7 @@ import com.lagradost.cloudstream3.utils.SubtitleHelper.getFlagFromIso
 import com.lagradost.cloudstream3.utils.UIHelper.dismissSafe
 import com.lagradost.cloudstream3.utils.UIHelper.getSpanCount
 import com.lagradost.cloudstream3.utils.UIHelper.popupMenuNoIconsAndNoStringRes
+import com.lagradost.cloudstream3.utils.UIHelper.setImage
 import java.util.*
 
 
@@ -232,7 +235,7 @@ class HomeFragment : Fragment() {
             return bottomSheetDialogBuilder
         }
 
-        fun getPairList(
+        private fun getPairList(
             anime: Chip?,
             cartoons: Chip?,
             tvs: Chip?,
@@ -311,7 +314,7 @@ class HomeFragment : Fragment() {
                 button?.isVisible = isValid
                 button?.isChecked = isValid && selectedTypes.any { types.contains(it) }
                 button?.isFocusable = true
-                if (isTrueTvSettings()) {
+                if (isLayout(TV)) {
                     button?.isFocusableInTouchMode = true
                 }
 
@@ -435,7 +438,7 @@ class HomeFragment : Fragment() {
 
         bottomSheetDialog?.ownShow()
         val layout =
-            if (isTvSettings()) R.layout.fragment_home_tv else R.layout.fragment_home
+            if (isLayout(TV or EMULATOR)) R.layout.fragment_home_tv else R.layout.fragment_home
         val root = inflater.inflate(layout, container, false)
         binding = try {
             FragmentHomeBinding.bind(root)
@@ -449,6 +452,7 @@ class HomeFragment : Fragment() {
     }
 
     override fun onDestroyView() {
+
         bottomSheetDialog?.ownHide()
         binding = null
         super.onDestroyView()
@@ -485,6 +489,10 @@ class HomeFragment : Fragment() {
 
     private var bottomSheetDialog: BottomSheetDialog? = null
 
+    // https://github.com/vivchar/RendererRecyclerViewAdapter/blob/185251ee9d94fb6eb3e063b00d646b745186c365/example/src/main/java/com/github/vivchar/example/pages/github/GithubFragment.kt#L32
+    // cry about it, but this is android we are talking about, we cant do the most simple shit without making a global variable
+    private var instanceState: Bundle = Bundle()
+    private var homeMasterAdapter: HomeParentItemAdapterPreview? = null
 
     @SuppressLint("SetTextI18n")
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
@@ -505,15 +513,14 @@ class HomeFragment : Fragment() {
                     activity.loadSearchResult(listHomepageItems.random())
                 }
             }
-
-            homeMasterRecycler.adapter =
-                HomeParentItemAdapterPreview(
-                    mutableListOf(),
-                    homeViewModel
-                )
+            homeMasterAdapter = HomeParentItemAdapterPreview(
+                fragment = this@HomeFragment,
+                homeViewModel,
+            )
+            homeMasterRecycler.adapter = homeMasterAdapter
             //fixPaddingStatusbar(homeLoadingStatusbar)
 
-            homeApiFab.isVisible = !isTvSettings()
+            homeApiFab.isVisible = isLayout(PHONE)
 
             homeMasterRecycler.addOnScrollListener(object : RecyclerView.OnScrollListener() {
                 override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
@@ -521,7 +528,7 @@ class HomeFragment : Fragment() {
                         homeApiFab.shrink() // hide
                         homeRandom.shrink()
                     } else if (dy < -5) {
-                        if (!isTvSettings()) {
+                        if (isLayout(PHONE)) {
                             homeApiFab.extend() // show
                             homeRandom.extend()
                         }
@@ -529,6 +536,7 @@ class HomeFragment : Fragment() {
                     super.onScrolled(recyclerView, dx, dy)
                 }
             })
+
         }
 
 
@@ -539,7 +547,7 @@ class HomeFragment : Fragment() {
                 settingsManager.getBoolean(
                     getString(R.string.random_button_key),
                     false
-                ) && !isTvSettings()
+                ) && isLayout(PHONE)
             binding?.homeRandom?.visibility = View.GONE
         }
 
@@ -559,10 +567,11 @@ class HomeFragment : Fragment() {
                         val mutableListOfResponse = mutableListOf<SearchResponse>()
                         listHomepageItems.clear()
 
-                        (homeMasterRecycler.adapter as? ParentItemAdapter)?.updateList(
-                            d.values.toMutableList(),
-                            homeMasterRecycler
-                        )
+                        (homeMasterRecycler.adapter as? ParentItemAdapter)?.submitList(d.values.map {
+                            it.copy(
+                                list = it.list.copy(list = it.list.list.toMutableList())
+                            )
+                        }.toMutableList())
 
                         homeLoading.isVisible = false
                         homeLoadingError.isVisible = false
@@ -611,7 +620,7 @@ class HomeFragment : Fragment() {
                     }
 
                     is Resource.Loading -> {
-                        (homeMasterRecycler.adapter as? ParentItemAdapter)?.updateList(listOf())
+                        (homeMasterRecycler.adapter as? ParentItemAdapter)?.submitList(listOf())
                         homeLoadingShimmer.startShimmer()
                         homeLoading.isVisible = true
                         homeLoadingError.isVisible = false

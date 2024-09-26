@@ -1,8 +1,10 @@
 package com.lagradost.cloudstream3.ui.settings
 
+import android.graphics.Bitmap
 import android.os.Bundle
+import android.os.CountDownTimer
 import android.view.View
-import android.view.View.*
+import android.view.View.FOCUS_DOWN
 import android.view.inputmethod.EditorInfo
 import android.widget.TextView
 import androidx.annotation.UiThread
@@ -11,33 +13,58 @@ import androidx.core.view.isGone
 import androidx.core.view.isVisible
 import androidx.fragment.app.FragmentActivity
 import androidx.preference.PreferenceFragmentCompat
+import androidx.preference.PreferenceManager
+import androidx.preference.SwitchPreferenceCompat
 import androidx.recyclerview.widget.RecyclerView
 import com.lagradost.cloudstream3.AcraApplication.Companion.openBrowser
+import com.lagradost.cloudstream3.CommonActivity.onDialogDismissedEvent
 import com.lagradost.cloudstream3.CommonActivity.showToast
 import com.lagradost.cloudstream3.R
 import com.lagradost.cloudstream3.databinding.AccountManagmentBinding
 import com.lagradost.cloudstream3.databinding.AccountSwitchBinding
 import com.lagradost.cloudstream3.databinding.AddAccountInputBinding
+import com.lagradost.cloudstream3.databinding.DeviceAuthBinding
 import com.lagradost.cloudstream3.mvvm.logError
 import com.lagradost.cloudstream3.syncproviders.AccountManager
 import com.lagradost.cloudstream3.syncproviders.AccountManager.Companion.aniListApi
 import com.lagradost.cloudstream3.syncproviders.AccountManager.Companion.malApi
 import com.lagradost.cloudstream3.syncproviders.AccountManager.Companion.openSubtitlesApi
 import com.lagradost.cloudstream3.syncproviders.AccountManager.Companion.simklApi
+import com.lagradost.cloudstream3.syncproviders.AccountManager.Companion.subDlApi
 import com.lagradost.cloudstream3.syncproviders.AuthAPI
 import com.lagradost.cloudstream3.syncproviders.InAppAuthAPI
 import com.lagradost.cloudstream3.syncproviders.OAuth2API
+import com.lagradost.cloudstream3.ui.result.img
+import com.lagradost.cloudstream3.ui.result.setImage
+import com.lagradost.cloudstream3.ui.result.setText
+import com.lagradost.cloudstream3.ui.result.txt
+import com.lagradost.cloudstream3.ui.settings.Globals.EMULATOR
+import com.lagradost.cloudstream3.ui.settings.Globals.PHONE
+import com.lagradost.cloudstream3.ui.settings.Globals.TV
+import com.lagradost.cloudstream3.ui.settings.Globals.isLayout
 import com.lagradost.cloudstream3.ui.settings.SettingsFragment.Companion.getPref
-import com.lagradost.cloudstream3.ui.settings.SettingsFragment.Companion.isTvSettings
+import com.lagradost.cloudstream3.ui.settings.SettingsFragment.Companion.hideOn
 import com.lagradost.cloudstream3.ui.settings.SettingsFragment.Companion.setPaddingBottom
 import com.lagradost.cloudstream3.ui.settings.SettingsFragment.Companion.setToolBarScrollFlags
 import com.lagradost.cloudstream3.ui.settings.SettingsFragment.Companion.setUpToolbar
+import com.lagradost.cloudstream3.utils.AppContextUtils.html
+import com.lagradost.cloudstream3.utils.BackupUtils
+import com.lagradost.cloudstream3.utils.BiometricAuthenticator.BiometricCallback
+import com.lagradost.cloudstream3.utils.BiometricAuthenticator.authCallback
+import com.lagradost.cloudstream3.utils.BiometricAuthenticator.biometricPrompt
+import com.lagradost.cloudstream3.utils.BiometricAuthenticator.deviceHasPasswordPinLock
+import com.lagradost.cloudstream3.utils.BiometricAuthenticator.isAuthEnabled
+import com.lagradost.cloudstream3.utils.BiometricAuthenticator.promptInfo
+import com.lagradost.cloudstream3.utils.BiometricAuthenticator.startBiometricAuthentication
 import com.lagradost.cloudstream3.utils.Coroutines.ioSafe
+import com.lagradost.cloudstream3.utils.SingleSelectionHelper.showBottomDialogText
+import com.lagradost.cloudstream3.utils.UIHelper.colorFromAttribute
 import com.lagradost.cloudstream3.utils.UIHelper.dismissSafe
 import com.lagradost.cloudstream3.utils.UIHelper.hideKeyboard
 import com.lagradost.cloudstream3.utils.UIHelper.setImage
+import qrcode.QRCode
 
-class SettingsAccount : PreferenceFragmentCompat() {
+class SettingsAccount : PreferenceFragmentCompat(), BiometricCallback {
     companion object {
         /** Used by nginx plugin too */
         fun showLoginInfo(
@@ -71,7 +98,7 @@ class SettingsAccount : PreferenceFragmentCompat() {
                 showAccountSwitch(activity, api)
             }
 
-            if (isTvSettings()) {
+            if (isLayout(TV or EMULATOR)) {
                 binding.accountSwitchAccount.requestFocus()
             }
         }
@@ -116,7 +143,109 @@ class SettingsAccount : PreferenceFragmentCompat() {
             try {
                 when (api) {
                     is OAuth2API -> {
-                        api.authenticate(activity)
+                        if (isLayout(PHONE) || !api.supportDeviceAuth) {
+                            api.authenticate(activity)
+                        } else if (api.supportDeviceAuth && activity != null) {
+
+                            val binding: DeviceAuthBinding =
+                                DeviceAuthBinding.inflate(activity.layoutInflater, null, false)
+
+                            val builder =
+                                AlertDialog.Builder(activity)
+                                    .setView(binding.root)
+
+                            builder.apply {
+                                setNegativeButton(R.string.cancel) { _, _ -> }
+                                setPositiveButton(R.string.auth_locally) { _, _ ->
+                                    api.authenticate(activity)
+                                }
+                            }
+
+                            val dialog = builder.create()
+
+                            ioSafe {
+                                try {
+                                    val pinCodeData = api.getDevicePin()
+                                    if (pinCodeData == null) {
+                                        showToast(R.string.device_pin_error_message)
+                                        api.authenticate(activity)
+                                        return@ioSafe
+                                    }
+
+                                    /*val logoBytes = ContextCompat.getDrawable(
+                                        activity,
+                                        R.drawable.cloud_2_solid
+                                    )?.toBitmapOrNull()?.let { bitmap ->
+                                        val csLogo = ByteArrayOutputStream()
+                                        bitmap.compress(Bitmap.CompressFormat.PNG, 100, csLogo)
+                                        csLogo.toByteArray()
+                                    }*/
+
+                                    val qrCodeImage = QRCode.ofRoundedSquares()
+                                        .withColor(activity.colorFromAttribute(R.attr.textColor))
+                                        .withBackgroundColor(activity.colorFromAttribute(R.attr.primaryBlackBackground))
+                                        //.withLogo(logoBytes, 200.toPx, 200.toPx) //For later if logo needed anytime
+                                        .build(pinCodeData.verificationUrl)
+                                        .render().nativeImage() as Bitmap
+
+                                    activity.runOnUiThread {
+                                        dialog.show()
+                                        binding.apply {
+                                            devicePinCode.setText(txt(pinCodeData.userCode))
+                                            deviceAuthMessage.setText(
+                                                txt(
+                                                    R.string.device_pin_url_message,
+                                                    pinCodeData.verificationUrl
+                                                )
+                                            )
+                                            deviceAuthQrcode.setImage(
+                                                img(qrCodeImage)
+                                            )
+                                        }
+
+                                        val expirationMillis =
+                                            pinCodeData.expiresIn.times(1000).toLong()
+
+                                        object : CountDownTimer(expirationMillis, 1000) {
+
+                                            override fun onTick(millisUntilFinished: Long) {
+                                                val secondsUntilFinished =
+                                                    millisUntilFinished.div(1000).toInt()
+
+                                                binding.deviceAuthValidationCounter.setText(
+                                                    txt(
+                                                        R.string.device_pin_counter_text,
+                                                        secondsUntilFinished.div(60),
+                                                        secondsUntilFinished.rem(60)
+                                                    )
+                                                )
+
+                                                ioSafe {
+                                                    if (secondsUntilFinished.rem(pinCodeData.interval) == 0 && api.handleDeviceAuth(pinCodeData)) {
+                                                        showToast(
+                                                            txt(
+                                                                R.string.authenticated_user,
+                                                                api.name
+                                                            )
+                                                        )
+                                                        dialog.dismissSafe(activity)
+                                                        cancel()
+                                                    }
+                                                }
+                                            }
+
+                                            override fun onFinish() {
+                                                showToast(R.string.device_pin_expired_message)
+                                                dialog.dismissSafe(activity)
+                                            }
+
+                                        }.start()
+                                    }
+                                } catch (e: Exception) {
+                                    logError(e)
+                                }
+                            }
+                        }
                     }
 
                     is InAppAuthAPI -> {
@@ -135,7 +264,7 @@ class SettingsAccount : PreferenceFragmentCompat() {
                             binding.loginUsernameInput to api.requiresUsername
                         )
 
-                        if (isTvSettings()) {
+                        if (isLayout(TV or EMULATOR)) {
                             visibilityMap.forEach { (input, isVisible) ->
                                 input.isVisible = isVisible
 
@@ -209,23 +338,15 @@ class SettingsAccount : PreferenceFragmentCompat() {
                                 server = if (api.requiresServer) binding.loginServerInput.text?.toString() else null,
                             )
                             ioSafe {
-                                val isSuccessful = try {
-                                    api.login(loginData)
+                                try {
+                                    showToast(
+                                        txt(
+                                            if (api.login(loginData)) R.string.authenticated_user else R.string.authenticated_user_fail,
+                                            api.name
+                                        )
+                                    )
                                 } catch (e: Exception) {
                                     logError(e)
-                                    false
-                                }
-                                activity.runOnUiThread {
-                                    try {
-                                        showToast(
-                                            activity.getString(if (isSuccessful) R.string.authenticated_user else R.string.authenticated_user_fail)
-                                                .format(
-                                                    api.name
-                                                )
-                                        )
-                                    } catch (e: Exception) {
-                                        logError(e) // format might fail
-                                    }
                                 }
                             }
                             dialog.dismissSafe(activity)
@@ -245,6 +366,31 @@ class SettingsAccount : PreferenceFragmentCompat() {
         }
     }
 
+    private fun updateAuthPreference(enabled: Boolean) {
+        val biometricKey = getString(R.string.biometric_key)
+
+        PreferenceManager.getDefaultSharedPreferences(context ?: return).edit()
+            .putBoolean(biometricKey, enabled).apply()
+        findPreference<SwitchPreferenceCompat>(biometricKey)?.isChecked = enabled
+    }
+
+    override fun onAuthenticationError() {
+        updateAuthPreference(!isAuthEnabled(context ?: return))
+    }
+
+    override fun onAuthenticationSuccess() {
+        if (isAuthEnabled(context?: return)) {
+            updateAuthPreference(true)
+            BackupUtils.backup(activity)
+            activity?.showBottomDialogText(
+                getString(R.string.biometric_setting),
+                getString(R.string.biometric_warning).html()
+            ) { onDialogDismissedEvent }
+        } else {
+            updateAuthPreference(false)
+        }
+    }
+
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         setUpToolbar(R.string.category_account)
@@ -256,18 +402,39 @@ class SettingsAccount : PreferenceFragmentCompat() {
         hideKeyboard()
         setPreferencesFromResource(R.xml.settings_account, rootKey)
 
+        //Hides the security  category on TV as it's only Biometric for now
+        getPref(R.string.pref_category_security_key)?.hideOn(TV or EMULATOR)
+
+        getPref(R.string.biometric_key)?.hideOn(TV or EMULATOR)?.setOnPreferenceClickListener {
+            val ctx = context ?: return@setOnPreferenceClickListener false
+
+            if (deviceHasPasswordPinLock(ctx)) {
+                startBiometricAuthentication(
+                    activity?: return@setOnPreferenceClickListener false,
+                    R.string.biometric_authentication_title,
+                    false
+                    )
+                promptInfo?.let {
+                    authCallback = this
+                    biometricPrompt?.authenticate(it)
+                }
+            }
+
+            false
+        }
+
         val syncApis =
             listOf(
                 R.string.mal_key to malApi,
                 R.string.anilist_key to aniListApi,
                 R.string.simkl_key to simklApi,
                 R.string.opensubtitles_key to openSubtitlesApi,
+                R.string.subdl_key to subDlApi,
             )
 
         for ((key, api) in syncApis) {
             getPref(key)?.apply {
-                title =
-                    getString(R.string.login_format).format(api.name, getString(R.string.account))
+                title = api.name
                 setOnPreferenceClickListener {
                     val info = api.loginInfo()
                     if (info != null) {

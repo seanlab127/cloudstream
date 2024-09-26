@@ -8,8 +8,8 @@ import androidx.appcompat.widget.SearchView
 import androidx.core.view.isVisible
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
-import com.lagradost.cloudstream3.APIHolder.getApiProviderLangSettings
 import com.lagradost.cloudstream3.AllLanguagesName
+import com.lagradost.cloudstream3.BuildConfig
 import com.lagradost.cloudstream3.R
 import com.lagradost.cloudstream3.TvType
 import com.lagradost.cloudstream3.databinding.FragmentPluginsBinding
@@ -17,10 +17,13 @@ import com.lagradost.cloudstream3.mvvm.observe
 import com.lagradost.cloudstream3.ui.home.HomeFragment.Companion.bindChips
 import com.lagradost.cloudstream3.ui.result.FOCUS_SELF
 import com.lagradost.cloudstream3.ui.result.setLinearListLayout
-import com.lagradost.cloudstream3.ui.settings.SettingsFragment.Companion.isTvSettings
+import com.lagradost.cloudstream3.ui.settings.Globals.EMULATOR
+import com.lagradost.cloudstream3.ui.settings.Globals.TV
+import com.lagradost.cloudstream3.ui.settings.Globals.isLayout
 import com.lagradost.cloudstream3.ui.settings.SettingsFragment.Companion.setToolBarScrollFlags
 import com.lagradost.cloudstream3.ui.settings.SettingsFragment.Companion.setUpToolbar
 import com.lagradost.cloudstream3.ui.settings.appLanguages
+import com.lagradost.cloudstream3.utils.AppContextUtils.getApiProviderLangSettings
 import com.lagradost.cloudstream3.utils.SingleSelectionHelper.showMultiDialog
 import com.lagradost.cloudstream3.utils.SubtitleHelper
 import com.lagradost.cloudstream3.utils.UIHelper.toPx
@@ -68,6 +71,8 @@ class PluginsFragment : Fragment() {
         val name = arguments?.getString(PLUGINS_BUNDLE_NAME)
         val url = arguments?.getString(PLUGINS_BUNDLE_URL)
         val isLocal = arguments?.getBoolean(PLUGINS_BUNDLE_LOCAL) == true
+        // download all extensions button
+        val downloadAllButton = binding?.settingsToolbar?.menu?.findItem(R.id.download_all)
 
         if (url == null || name == null) {
             activity?.onBackPressedDispatcher?.onBackPressed()
@@ -155,7 +160,7 @@ class PluginsFragment : Fragment() {
                 pluginViewModel.handlePluginAction(activity, url, it, isLocal)
             }
 
-        if (isTvSettings()) {
+        if (isLayout(TV or EMULATOR)) {
             // Scrolling down does not reveal the whole RecyclerView on TV, add to bypass that.
             binding?.pluginRecyclerView?.setPadding(0, 0, 0, 200.toPx)
         }
@@ -169,7 +174,7 @@ class PluginsFragment : Fragment() {
 
         if (isLocal) {
             // No download button and no categories on local
-            binding?.settingsToolbar?.menu?.findItem(R.id.download_all)?.isVisible = false
+            downloadAllButton?.isVisible = false
             binding?.settingsToolbar?.menu?.findItem(R.id.lang_filter)?.isVisible = false
             pluginViewModel.updatePluginListLocal()
 
@@ -177,11 +182,15 @@ class PluginsFragment : Fragment() {
         } else {
             pluginViewModel.updatePluginList(context, url)
             binding?.tvtypesChipsScroll?.root?.isVisible = true
+            // not needed for users but may be useful for devs
+            downloadAllButton?.isVisible = BuildConfig.DEBUG
+
+
 
             bindChips(
                 binding?.tvtypesChipsScroll?.tvtypesChips,
                 emptyList(),
-                TvType.values().toList(),
+                TvType.entries.toList(),
                 callback = { list ->
                     pluginViewModel.tvTypes.clear()
                     pluginViewModel.tvTypes.addAll(list.map { it.name })

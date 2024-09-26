@@ -3,6 +3,7 @@ package com.lagradost.cloudstream3.ui.player
 import android.animation.ObjectAnimator
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.app.Dialog
 import android.content.Context
 import android.content.pm.ActivityInfo
 import android.content.res.ColorStateList
@@ -25,19 +26,26 @@ import android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHO
 import android.view.animation.AlphaAnimation
 import android.view.animation.Animation
 import android.view.animation.AnimationUtils
-import androidx.appcompat.app.AlertDialog
+import androidx.annotation.OptIn
+import android.widget.LinearLayout
 import androidx.core.graphics.blue
 import androidx.core.graphics.green
 import androidx.core.graphics.red
+import androidx.core.view.children
 import androidx.core.view.isGone
 import androidx.core.view.isInvisible
 import androidx.core.view.isVisible
 import androidx.core.widget.doOnTextChanged
+import androidx.media3.common.MimeTypes
+import androidx.media3.common.util.UnstableApi
 import androidx.preference.PreferenceManager
+import androidx.recyclerview.widget.SimpleItemAnimator
+import com.google.android.material.button.MaterialButton
 import com.lagradost.cloudstream3.CommonActivity.keyEventListener
 import com.lagradost.cloudstream3.CommonActivity.playerEventListener
 import com.lagradost.cloudstream3.CommonActivity.screenHeight
 import com.lagradost.cloudstream3.CommonActivity.screenWidth
+import com.lagradost.cloudstream3.LoadResponse
 import com.lagradost.cloudstream3.R
 import com.lagradost.cloudstream3.databinding.PlayerCustomLayoutBinding
 import com.lagradost.cloudstream3.databinding.SubtitleOffsetBinding
@@ -46,8 +54,10 @@ import com.lagradost.cloudstream3.ui.player.GeneratorPlayer.Companion.subsProvid
 import com.lagradost.cloudstream3.ui.player.source_priority.QualityDataHelper
 import com.lagradost.cloudstream3.ui.result.setText
 import com.lagradost.cloudstream3.ui.result.txt
-import com.lagradost.cloudstream3.ui.settings.SettingsFragment
-import com.lagradost.cloudstream3.utils.AppUtils.isUsingMobileData
+import com.lagradost.cloudstream3.ui.settings.Globals.EMULATOR
+import com.lagradost.cloudstream3.ui.settings.Globals.TV
+import com.lagradost.cloudstream3.ui.settings.Globals.isLayout
+import com.lagradost.cloudstream3.utils.AppContextUtils.isUsingMobileData
 import com.lagradost.cloudstream3.utils.DataStoreHelper
 import com.lagradost.cloudstream3.utils.SingleSelectionHelper.showDialog
 import com.lagradost.cloudstream3.utils.UIHelper.colorFromAttribute
@@ -60,7 +70,11 @@ import com.lagradost.cloudstream3.utils.UIHelper.showSystemUI
 import com.lagradost.cloudstream3.utils.UIHelper.toPx
 import com.lagradost.cloudstream3.utils.UserPreferenceDelegate
 import com.lagradost.cloudstream3.utils.Vector2
-import kotlin.math.*
+import kotlin.math.abs
+import kotlin.math.ceil
+import kotlin.math.max
+import kotlin.math.min
+import kotlin.math.round
 
 const val MINIMUM_SEEK_TIME = 7000L         // when swipe seeking
 const val MINIMUM_VERTICAL_SWIPE = 2.0f     // in percentage
@@ -77,10 +91,10 @@ open class FullScreenPlayer : AbstractPlayerFragment() {
     private var isVerticalOrientation: Boolean = false
     protected open var lockRotation = true
     protected open var isFullScreenPlayer = true
-    protected open var isTv = false
     protected var playerBinding: PlayerCustomLayoutBinding? = null
 
-    private var durationMode : Boolean by UserPreferenceDelegate("duration_mode", false)
+    private var durationMode: Boolean by UserPreferenceDelegate("duration_mode", false)
+
     // state of player UI
     protected var isShowing = false
     protected var isLocked = false
@@ -112,6 +126,7 @@ open class FullScreenPlayer : AbstractPlayerFragment() {
     protected var doubleTapPauseEnabled = true
     protected var playerRotateEnabled = false
     protected var autoPlayerRotateEnabled = false
+    private var hideControlsNames = false
 
     protected var subtitleDelay
         set(value) = try {
@@ -181,7 +196,7 @@ open class FullScreenPlayer : AbstractPlayerFragment() {
 
     open fun openOnlineSubPicker(
         context: Context,
-        imdbId: Long?,
+        loadResponse: LoadResponse?,
         dismissCallback: (() -> Unit)
     ) {
         throw NotImplementedError()
@@ -233,6 +248,7 @@ open class FullScreenPlayer : AbstractPlayerFragment() {
         fadeAnimation.duration = 100
         fadeAnimation.fillAfter = true
 
+        @OptIn(UnstableApi::class)
         val sView = subView
         val sStyle = subStyle
         if (sView != null && sStyle != null) {
@@ -245,7 +261,6 @@ open class FullScreenPlayer : AbstractPlayerFragment() {
         }
 
         val playerSourceMove = if (isShowing) 0f else -50.toPx.toFloat()
-
 
         playerBinding?.apply {
             playerOpenSource.let {
@@ -283,48 +298,51 @@ open class FullScreenPlayer : AbstractPlayerFragment() {
     }
 
     override fun subtitlesChanged() {
+        val tracks = player.getVideoTracks()
+        val isBuiltinSubtitles = tracks.currentTextTracks.all { track ->
+            track.mimeType == MimeTypes.APPLICATION_MEDIA3_CUES
+        }
+        // Subtitle offset is not possible on built-in media3 tracks
         playerBinding?.playerSubtitleOffsetBtt?.isGone =
-            player.getCurrentPreferredSubtitle() == null
+            isBuiltinSubtitles || tracks.currentTextTracks.isEmpty()
     }
 
-    private fun restoreOrientationWithSensor(activity: Activity){
+    private fun restoreOrientationWithSensor(activity: Activity) {
         val currentOrientation = activity.resources.configuration.orientation
-        var orientation = 0
-        when (currentOrientation) {
+        val orientation = when (currentOrientation) {
             Configuration.ORIENTATION_LANDSCAPE ->
-                orientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-
-            Configuration.ORIENTATION_SQUARE, Configuration.ORIENTATION_UNDEFINED ->
-                orientation = dynamicOrientation()
+                ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
 
             Configuration.ORIENTATION_PORTRAIT ->
-                orientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+                ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+
+            else -> dynamicOrientation()
         }
         activity.requestedOrientation = orientation
     }
 
-    private fun toggleOrientationWithSensor(activity: Activity){
+    private fun toggleOrientationWithSensor(activity: Activity) {
         val currentOrientation = activity.resources.configuration.orientation
-        var orientation = 0
-        when (currentOrientation) {
+        val orientation: Int = when (currentOrientation) {
             Configuration.ORIENTATION_LANDSCAPE ->
-                orientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
-
-            Configuration.ORIENTATION_SQUARE, Configuration.ORIENTATION_UNDEFINED ->
-                orientation = dynamicOrientation()
+                ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
 
             Configuration.ORIENTATION_PORTRAIT ->
-                orientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+
+            else -> dynamicOrientation()
         }
         activity.requestedOrientation = orientation
     }
 
     open fun lockOrientation(activity: Activity) {
-        val display =
+        @Suppress("DEPRECATION")
+        val display = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R)
             (activity.getSystemService(Context.WINDOW_SERVICE) as WindowManager).defaultDisplay
+        else activity.display!!
         val rotation = display.rotation
         val currentOrientation = activity.resources.configuration.orientation
-        var orientation = 0
+        val orientation: Int
         when (currentOrientation) {
             Configuration.ORIENTATION_LANDSCAPE ->
                 orientation =
@@ -333,27 +351,25 @@ open class FullScreenPlayer : AbstractPlayerFragment() {
                     else
                         ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE
 
-            Configuration.ORIENTATION_SQUARE, Configuration.ORIENTATION_UNDEFINED ->
-                orientation = dynamicOrientation()
-
             Configuration.ORIENTATION_PORTRAIT ->
                 orientation =
                     if (rotation == Surface.ROTATION_0 || rotation == Surface.ROTATION_270)
                         ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
                     else
                         ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT
+
+            else -> orientation = dynamicOrientation()
         }
         activity.requestedOrientation = orientation
     }
 
     private fun updateOrientation(ignoreDynamicOrientation: Boolean = false) {
         activity?.apply {
-            if(lockRotation) {
-                if(isLocked) {
+            if (lockRotation) {
+                if (isLocked) {
                     lockOrientation(this)
-                }
-                else {
-                    if(ignoreDynamicOrientation){
+                } else {
+                    if (ignoreDynamicOrientation) {
                         // restore when lock is disabled
                         restoreOrientationWithSensor(this)
                     } else {
@@ -423,29 +439,39 @@ open class FullScreenPlayer : AbstractPlayerFragment() {
 
     private fun showSubtitleOffsetDialog() {
         val ctx = context ?: return
+        // Pause player because the subtitles cannot be continuously updated to follow playback.
+        player.handleEvent(
+            CSPlayerEvent.Pause,
+            PlayerEventSource.UI
+        )
 
         val binding = SubtitleOffsetBinding.inflate(LayoutInflater.from(ctx), null, false)
 
-        val builder =
-            AlertDialog.Builder(ctx, R.style.AlertDialogCustom)
-                .setView(binding.root)
-        val dialog = builder.create()
+        // Use dialog as opposed to alertdialog to get fullscreen
+        val dialog = Dialog(ctx, R.style.AlertDialogCustomBlack).apply {
+            setContentView(binding.root)
+        }
         dialog.show()
 
         val beforeOffset = subtitleDelay
 
-        /*val applyButton = dialog.findViewById<TextView>(R.id.apply_btt)!!
-        val cancelButton = dialog.findViewById<TextView>(R.id.cancel_btt)!!
-        val input = dialog.findViewById<EditText>(R.id.subtitle_offset_input)!!
-        val sub = dialog.findViewById<ImageView>(R.id.subtitle_offset_subtract)!!
-        val subMore = dialog.findViewById<ImageView>(R.id.subtitle_offset_subtract_more)!!
-        val add = dialog.findViewById<ImageView>(R.id.subtitle_offset_add)!!
-        val addMore = dialog.findViewById<ImageView>(R.id.subtitle_offset_add_more)!!
-        val subTitle = dialog.findViewById<TextView>(R.id.subtitle_offset_sub_title)!!*/
         binding.apply {
+            var subtitleAdapter: SubtitleOffsetItemAdapter? = null
+
             subtitleOffsetInput.doOnTextChanged { text, _, _, _ ->
                 text?.toString()?.toLongOrNull()?.let { time ->
                     subtitleDelay = time
+
+                    // Scroll to the first active subtitle
+                    val playerPosition = player.getPosition() ?: 0
+                    val totalPosition = playerPosition - subtitleDelay
+                    subtitleAdapter?.updateTime(totalPosition)
+
+                    subtitleAdapter?.getLatestActiveItem(totalPosition)
+                        ?.let { subtitlePos ->
+                            subtitleOffsetRecyclerview.scrollToPosition(subtitlePos)
+                        }
+
                     val str = when {
                         time > 0L -> {
                             txt(R.string.subtitle_offset_extra_hint_later_format, time)
@@ -464,6 +490,26 @@ open class FullScreenPlayer : AbstractPlayerFragment() {
             }
             subtitleOffsetInput.text =
                 Editable.Factory.getInstance()?.newEditable(beforeOffset.toString())
+
+            val subtitles = player.getSubtitleCues().toMutableList()
+
+            subtitleOffsetRecyclerview.isVisible = subtitles.isNotEmpty()
+            noSubtitlesLoadedNotice.isVisible = subtitles.isEmpty()
+
+            val initialSubtitlePosition = (player.getPosition() ?: 0) - subtitleDelay
+            subtitleAdapter =
+                SubtitleOffsetItemAdapter(initialSubtitlePosition, subtitles) { subtitleCue ->
+                    val playerPosition = player.getPosition() ?: 0
+                    subtitleOffsetInput.text = Editable.Factory.getInstance()
+                        ?.newEditable((playerPosition - subtitleCue.startTimeMs).toString())
+                }
+
+            subtitleOffsetRecyclerview.adapter = subtitleAdapter
+            // Prevent flashing changes when changing items
+            (subtitleOffsetRecyclerview.itemAnimator as? SimpleItemAnimator)?.supportsChangeAnimations = false
+
+            val firstSubtitle = subtitleAdapter.getLatestActiveItem(initialSubtitlePosition)
+            subtitleOffsetRecyclerview.scrollToPosition(firstSubtitle)
 
             val buttonChange = 100L
             val buttonChangeMore = 1000L
@@ -492,6 +538,11 @@ open class FullScreenPlayer : AbstractPlayerFragment() {
                     activity?.hideSystemUI()
             }
             applyBtt.setOnClickListener {
+                dialog.dismissSafe(activity)
+                player.seekTime(1L)
+            }
+            resetBtt.setOnClickListener {
+                subtitleDelay = 0
                 dialog.dismissSafe(activity)
                 player.seekTime(1L)
             }
@@ -555,7 +606,7 @@ open class FullScreenPlayer : AbstractPlayerFragment() {
                 playerRewHolder.alpha = 1f
 
                 val rotateLeft = AnimationUtils.loadAnimation(context, R.anim.rotate_left)
-                exoRew.startAnimation(rotateLeft)
+                playerRew.startAnimation(rotateLeft)
 
                 val goLeft = AnimationUtils.loadAnimation(context, R.anim.go_left)
                 goLeft.setAnimationListener(object : Animation.AnimationListener {
@@ -588,7 +639,7 @@ open class FullScreenPlayer : AbstractPlayerFragment() {
                 playerFfwdHolder.alpha = 1f
 
                 val rotateRight = AnimationUtils.loadAnimation(context, R.anim.rotate_right)
-                exoFfwd.startAnimation(rotateRight)
+                playerFfwd.startAnimation(rotateRight)
 
                 val goRight = AnimationUtils.loadAnimation(context, R.anim.go_right)
                 goRight.setAnimationListener(object : Animation.AnimationListener {
@@ -676,7 +727,7 @@ open class FullScreenPlayer : AbstractPlayerFragment() {
         updateLockUI()
     }
 
-    fun updateUIVisibility() {
+    open fun updateUIVisibility() {
         val isGone = isLocked || !isShowing
         var togglePlayerTitleGone = isGone
         context?.let {
@@ -726,6 +777,15 @@ open class FullScreenPlayer : AbstractPlayerFragment() {
     private var currentTapIndex = 0
     protected fun autoHide() {
         currentTapIndex++
+        delayHide()
+    }
+
+    override fun playerStatusChanged() {
+        super.playerStatusChanged()
+        delayHide()
+    }
+
+    private fun delayHide() {
         val index = currentTapIndex
         playerBinding?.playerHolder?.postDelayed({
             if (!isCurrentTouchValid && isShowing && index == currentTapIndex && player.getIsPlaying()) {
@@ -947,7 +1007,10 @@ open class FullScreenPlayer : AbstractPlayerFragment() {
                                         }
 
                                         else -> {
-                                            player.handleEvent(CSPlayerEvent.PlayPauseToggle, PlayerEventSource.UI)
+                                            player.handleEvent(
+                                                CSPlayerEvent.PlayPauseToggle,
+                                                PlayerEventSource.UI
+                                            )
                                         }
                                     }
                                 } else if (doubleTapEnabled && isFullScreenPlayer) {
@@ -1140,6 +1203,7 @@ open class FullScreenPlayer : AbstractPlayerFragment() {
         return true
     }
 
+    @SuppressLint("GestureBackNavigation")
     private fun handleKeyEvent(event: KeyEvent, hasNavigated: Boolean): Boolean {
         if (hasNavigated) {
             autoHide()
@@ -1156,6 +1220,7 @@ open class FullScreenPlayer : AbstractPlayerFragment() {
                                 }
                             }
 
+                            KeyEvent.KEYCODE_DPAD_DOWN,
                             KeyEvent.KEYCODE_DPAD_UP -> {
                                 if (!isShowing) {
                                     onClickChange()
@@ -1204,7 +1269,7 @@ open class FullScreenPlayer : AbstractPlayerFragment() {
 
                     // netflix capture back and hide ~monke
                     KeyEvent.KEYCODE_BACK -> {
-                        if (isShowing && isTv) {
+                        if (isShowing && isLayout(TV or EMULATOR)) {
                             onClickChange()
                             return true
                         }
@@ -1222,6 +1287,7 @@ open class FullScreenPlayer : AbstractPlayerFragment() {
         // if nothing has loaded these buttons should not be visible
         playerBinding?.apply {
             playerSkipEpisode.isVisible = false
+            playerGoForward.isVisible = false
             playerTracksBtt.isVisible = false
             playerSkipOp.isVisible = false
             shadowOverlay.isVisible = false
@@ -1293,6 +1359,10 @@ open class FullScreenPlayer : AbstractPlayerFragment() {
 
                 PlayerEventType.SeekBack -> {
                     player.handleEvent(CSPlayerEvent.SeekBack)
+                }
+
+                PlayerEventType.Restart -> {
+                    player.handleEvent(CSPlayerEvent.Restart)
                 }
 
                 PlayerEventType.ToggleMute -> {
@@ -1390,6 +1460,8 @@ open class FullScreenPlayer : AbstractPlayerFragment() {
                         false
                     )
 
+                hideControlsNames = settingsManager.getBoolean(ctx.getString(R.string.hide_player_control_names_key), false)
+
                 val profiles = QualityDataHelper.getProfiles()
                 val type = if (ctx.isUsingMobileData())
                     QualityDataHelper.QualityProfileType.Data
@@ -1410,12 +1482,34 @@ open class FullScreenPlayer : AbstractPlayerFragment() {
                 playerSpeedBtt.isVisible = playBackSpeedEnabled
                 playerResizeBtt.isVisible = playerResizeEnabled
                 playerRotateBtt.isVisible = playerRotateEnabled
+                if (hideControlsNames) {
+                    hideControlsNames()
+                }
             }
         } catch (e: Exception) {
             logError(e)
         }
 
         playerBinding?.apply {
+
+            if (isLayout(TV or EMULATOR)) {
+                mapOf(
+                    playerGoBack to playerGoBackText,
+                    playerRestart to playerRestartText,
+                    playerGoForward to playerGoForwardText
+                ).forEach { (button, text) ->
+                    button.setOnFocusChangeListener { _, hasFocus ->
+                        if (!hasFocus) {
+                            text.isSelected = false
+                            text.isVisible = false
+                            return@setOnFocusChangeListener
+                        }
+                        text.isSelected = true
+                        text.isVisible = true
+                    }
+                }
+            }
+
             playerPausePlay.setOnClickListener {
                 autoHide()
                 player.handleEvent(CSPlayerEvent.PlayPauseToggle)
@@ -1459,6 +1553,16 @@ open class FullScreenPlayer : AbstractPlayerFragment() {
                 player.handleEvent(CSPlayerEvent.NextEpisode)
             }
 
+            playerGoForward.setOnClickListener {
+                autoHide()
+                player.handleEvent(CSPlayerEvent.NextEpisode)
+            }
+
+            playerRestart.setOnClickListener {
+                autoHide()
+                player.handleEvent(CSPlayerEvent.Restart)
+            }
+
             playerLock.setOnClickListener {
                 autoHide()
                 toggleLock()
@@ -1468,12 +1572,12 @@ open class FullScreenPlayer : AbstractPlayerFragment() {
                 showSubtitleOffsetDialog()
             }
 
-            exoRew.setOnClickListener {
+            playerRew.setOnClickListener {
                 autoHide()
                 rewind()
             }
 
-            exoFfwd.setOnClickListener {
+            playerFfwd.setOnClickListener {
                 autoHide()
                 fastForward()
             }
@@ -1514,7 +1618,7 @@ open class FullScreenPlayer : AbstractPlayerFragment() {
             }
         }
         // cs3 is peak media center
-        setRemainingTimeCounter(durationMode || SettingsFragment.isTrueTvSettings())
+        setRemainingTimeCounter(durationMode || isLayout(TV))
         playerBinding?.exoPosition?.doOnTextChanged { _, _, _, _ ->
             updateRemainingTime()
         }
@@ -1531,6 +1635,22 @@ open class FullScreenPlayer : AbstractPlayerFragment() {
         activity?.let {
             toggleOrientationWithSensor(it)
         }
+    }
+
+    private fun PlayerCustomLayoutBinding.hideControlsNames() {
+        fun iterate(layout: LinearLayout) {
+            layout.children.forEach {
+                if (it is MaterialButton) {
+                    it.textSize = 0f
+                    it.iconPadding = 0
+                    it.iconGravity = MaterialButton.ICON_GRAVITY_TEXT_START
+                    it.setPadding(0,0,0,0)
+                } else if (it is LinearLayout) {
+                    iterate(it)
+                }
+            }
+        }
+        iterate(playerLockHolder.parent as LinearLayout)
     }
 
     override fun playerDimensionsLoaded(width: Int, height: Int) {
@@ -1552,7 +1672,7 @@ open class FullScreenPlayer : AbstractPlayerFragment() {
 
     private fun setRemainingTimeCounter(showRemaining: Boolean) {
         durationMode = showRemaining
-        playerBinding?.exoDuration?.isInvisible= showRemaining
+        playerBinding?.exoDuration?.isInvisible = showRemaining
         playerBinding?.timeLeft?.isVisible = showRemaining
     }
 

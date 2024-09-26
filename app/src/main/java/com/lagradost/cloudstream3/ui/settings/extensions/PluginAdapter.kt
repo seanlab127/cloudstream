@@ -1,9 +1,11 @@
 package com.lagradost.cloudstream3.ui.settings.extensions
 
+import android.annotation.SuppressLint
 import android.text.format.Formatter.formatShortFileSize
 import android.util.Log
 import android.view.LayoutInflater
 import android.view.ViewGroup
+import androidx.annotation.VisibleForTesting
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.isGone
 import androidx.core.view.isVisible
@@ -12,25 +14,27 @@ import androidx.recyclerview.widget.RecyclerView
 import com.lagradost.cloudstream3.AcraApplication.Companion.getActivity
 import com.lagradost.cloudstream3.PROVIDER_STATUS_DOWN
 import com.lagradost.cloudstream3.R
+import com.lagradost.cloudstream3.TvType
 import com.lagradost.cloudstream3.databinding.RepositoryItemBinding
 import com.lagradost.cloudstream3.plugins.PluginManager
 import com.lagradost.cloudstream3.plugins.VotingApi.getVotes
 import com.lagradost.cloudstream3.ui.result.setText
 import com.lagradost.cloudstream3.ui.result.txt
-import com.lagradost.cloudstream3.ui.settings.SettingsFragment.Companion.isTrueTvSettings
-import com.lagradost.cloudstream3.utils.AppUtils.html
+import com.lagradost.cloudstream3.ui.settings.Globals.TV
+import com.lagradost.cloudstream3.ui.settings.Globals.isLayout
+import com.lagradost.cloudstream3.utils.AppContextUtils.html
 import com.lagradost.cloudstream3.utils.Coroutines.ioSafe
 import com.lagradost.cloudstream3.utils.Coroutines.main
 import com.lagradost.cloudstream3.utils.SubtitleHelper.fromTwoLettersToLanguage
 import com.lagradost.cloudstream3.utils.SubtitleHelper.getFlagFromIso
 import com.lagradost.cloudstream3.utils.UIHelper.setImage
 import com.lagradost.cloudstream3.utils.UIHelper.toPx
-import org.junit.Assert
-import org.junit.Test
 import java.text.DecimalFormat
 import kotlin.math.floor
 import kotlin.math.log10
-
+import kotlin.math.pow
+import org.junit.Test
+import org.junit.Assert
 
 data class PluginViewData(
     val plugin: Plugin,
@@ -44,7 +48,7 @@ class PluginAdapter(
     private val plugins: MutableList<PluginViewData> = mutableListOf()
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
-        val layout = if(isTrueTvSettings()) R.layout.repository_item_tv else R.layout.repository_item
+        val layout = if(isLayout(TV)) R.layout.repository_item_tv else R.layout.repository_item
         val inflated = LayoutInflater.from(parent.context).inflate(layout, parent, false)
 
         return PluginViewHolder(
@@ -99,6 +103,8 @@ class PluginAdapter(
             return findClosestBase2(target, current * 2, max)
         }
 
+        // DO NOT MOVE, as running this test will result in ExceptionInInitializerError on prerelease due to static variables using Resources.getSystem()
+        // this test function is only to show how the function works
         @Test
         fun testFindClosestBase2() {
             Assert.assertEquals(16, findClosestBase2(0))
@@ -120,10 +126,7 @@ class PluginAdapter(
             val base = value / 3
             return if (value >= 3 && base < suffix.size) {
                 DecimalFormat("#0.00").format(
-                    numValue / Math.pow(
-                        10.0,
-                        (base * 3).toDouble()
-                    )
+                    numValue / 10.0.pow((base * 3).toDouble())
                 ) + suffix[base]
             } else {
                 DecimalFormat().format(numValue)
@@ -134,6 +137,7 @@ class PluginAdapter(
     inner class PluginViewHolder(val binding: RepositoryItemBinding) :
         RecyclerView.ViewHolder(binding.root) {
 
+        @SuppressLint("SetTextI18n")
         fun bind(
             data: PluginViewData,
         ) {
@@ -149,7 +153,7 @@ class PluginAdapter(
                 R.drawable.ic_baseline_delete_outline_24
             else R.drawable.netflix_download
 
-            binding.nsfwMarker.isVisible = metadata.tvTypes?.contains("NSFW") ?: false
+            binding.nsfwMarker.isVisible = metadata.tvTypes?.contains(TvType.NSFW.name) ?: false
             binding.actionButton.setImageResource(drawableInt)
 
             binding.actionButton.setOnClickListener {

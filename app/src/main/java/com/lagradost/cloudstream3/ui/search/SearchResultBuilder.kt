@@ -1,5 +1,6 @@
 package com.lagradost.cloudstream3.ui.search
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.view.View
 import android.widget.ImageView
@@ -17,8 +18,9 @@ import com.lagradost.cloudstream3.SearchQuality
 import com.lagradost.cloudstream3.SearchResponse
 import com.lagradost.cloudstream3.isMovieType
 import com.lagradost.cloudstream3.syncproviders.SyncAPI
-import com.lagradost.cloudstream3.ui.settings.SettingsFragment.Companion.isTrueTvSettings
-import com.lagradost.cloudstream3.utils.AppUtils.getNameFull
+import com.lagradost.cloudstream3.ui.settings.Globals.TV
+import com.lagradost.cloudstream3.ui.settings.Globals.isLayout
+import com.lagradost.cloudstream3.utils.AppContextUtils.getNameFull
 import com.lagradost.cloudstream3.utils.DataStoreHelper
 import com.lagradost.cloudstream3.utils.DataStoreHelper.fixVisual
 import com.lagradost.cloudstream3.utils.SubtitleHelper
@@ -36,16 +38,12 @@ object SearchResultBuilder {
         }
     }
 
-    /**
-     * @param nextFocusBehavior True if first, False if last, Null if between.
-     * Used to prevent escaping the adapter horizontally (focus wise).
-     */
+    @SuppressLint("StringFormatInvalid")
     fun bind(
         clickCallback: (SearchClickCallback) -> Unit,
         card: SearchResponse,
         position: Int,
         itemView: View,
-        nextFocusBehavior: Boolean? = null,
         nextFocusUp: Int? = null,
         nextFocusDown: Int? = null,
         colorCallback : ((Palette) -> Unit)? = null
@@ -164,7 +162,7 @@ object SearchResultBuilder {
 
         bg.isFocusable = false
         bg.isFocusableInTouchMode = false
-        if(!isTrueTvSettings()) {
+        if(!isLayout(TV)) {
             bg.setOnClickListener {
                 click(it)
             }
@@ -207,7 +205,7 @@ object SearchResultBuilder {
 
         */
 
-        if (isTrueTvSettings()) {
+        if (isLayout(TV)) {
            // bg.isFocusable = true
            // bg.isFocusableInTouchMode = true
            // bg.touchscreenBlocksFocus = false

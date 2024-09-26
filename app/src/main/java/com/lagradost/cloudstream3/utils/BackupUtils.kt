@@ -26,13 +26,13 @@ import com.lagradost.cloudstream3.syncproviders.providers.MALApi.Companion.MAL_T
 import com.lagradost.cloudstream3.syncproviders.providers.MALApi.Companion.MAL_UNIXTIME_KEY
 import com.lagradost.cloudstream3.syncproviders.providers.MALApi.Companion.MAL_USER_KEY
 import com.lagradost.cloudstream3.syncproviders.providers.OpenSubtitlesApi.Companion.OPEN_SUBTITLES_USER_KEY
+import com.lagradost.cloudstream3.syncproviders.providers.SubDlApi.Companion.SUBDL_SUBTITLES_USER_KEY
 import com.lagradost.cloudstream3.ui.result.txt
 import com.lagradost.cloudstream3.utils.Coroutines.ioSafe
 import com.lagradost.cloudstream3.utils.Coroutines.main
 import com.lagradost.cloudstream3.utils.DataStore.getDefaultSharedPrefs
 import com.lagradost.cloudstream3.utils.DataStore.getSharedPrefs
 import com.lagradost.cloudstream3.utils.DataStore.mapper
-import com.lagradost.cloudstream3.utils.DataStore.setKeyRaw
 import com.lagradost.cloudstream3.utils.UIHelper.checkWrite
 import com.lagradost.cloudstream3.utils.UIHelper.requestRW
 import com.lagradost.cloudstream3.utils.VideoDownloadManager.setupStream
@@ -41,7 +41,7 @@ import java.io.OutputStream
 import java.io.PrintWriter
 import java.lang.System.currentTimeMillis
 import java.text.SimpleDateFormat
-import java.util.*
+import java.util.Date
 
 object BackupUtils {
 
@@ -65,24 +65,28 @@ object BackupUtils {
         PLUGINS_KEY_LOCAL,
 
         OPEN_SUBTITLES_USER_KEY,
+        SUBDL_SUBTITLES_USER_KEY,
+
+        "biometric_key", // can lock down users if backup is shared on a incompatible device
         "nginx_user", // Nginx user key
+        "download_path_key" // No access rights after restore data from backup
     )
 
-    /** false if blacklisted key */
+    /** false if key should not be contained in backup */
     private fun String.isTransferable(): Boolean {
-        return !nonTransferableKeys.contains(this)
+        return !nonTransferableKeys.any { this.contains(it) }
     }
 
     private var restoreFileSelector: ActivityResultLauncher<Array<String>>? = null
 
     // Kinda hack, but I couldn't think of a better way
     data class BackupVars(
-        @JsonProperty("_Bool") val _Bool: Map<String, Boolean>?,
-        @JsonProperty("_Int") val _Int: Map<String, Int>?,
-        @JsonProperty("_String") val _String: Map<String, String>?,
-        @JsonProperty("_Float") val _Float: Map<String, Float>?,
-        @JsonProperty("_Long") val _Long: Map<String, Long>?,
-        @JsonProperty("_StringSet") val _StringSet: Map<String, Set<String>?>?,
+        @JsonProperty("_Bool") val bool: Map<String, Boolean>?,
+        @JsonProperty("_Int") val int: Map<String, Int>?,
+        @JsonProperty("_String") val string: Map<String, String>?,
+        @JsonProperty("_Float") val float: Map<String, Float>?,
+        @JsonProperty("_Long") val long: Map<String, Long>?,
+        @JsonProperty("_StringSet") val stringSet: Map<String, Set<String>?>?,
     )
 
     data class BackupFile(
@@ -130,21 +134,21 @@ object BackupUtils {
     ) {
         if (context == null) return
         if (restoreSettings) {
-            context.restoreMap(backupFile.settings._Bool, true)
-            context.restoreMap(backupFile.settings._Int, true)
-            context.restoreMap(backupFile.settings._String, true)
-            context.restoreMap(backupFile.settings._Float, true)
-            context.restoreMap(backupFile.settings._Long, true)
-            context.restoreMap(backupFile.settings._StringSet, true)
+            context.restoreMap(backupFile.settings.bool, true)
+            context.restoreMap(backupFile.settings.int, true)
+            context.restoreMap(backupFile.settings.string, true)
+            context.restoreMap(backupFile.settings.float, true)
+            context.restoreMap(backupFile.settings.long, true)
+            context.restoreMap(backupFile.settings.stringSet, true)
         }
 
         if (restoreDataStore) {
-            context.restoreMap(backupFile.datastore._Bool)
-            context.restoreMap(backupFile.datastore._Int)
-            context.restoreMap(backupFile.datastore._String)
-            context.restoreMap(backupFile.datastore._Float)
-            context.restoreMap(backupFile.datastore._Long)
-            context.restoreMap(backupFile.datastore._StringSet)
+            context.restoreMap(backupFile.datastore.bool)
+            context.restoreMap(backupFile.datastore.int)
+            context.restoreMap(backupFile.datastore.string)
+            context.restoreMap(backupFile.datastore.float)
+            context.restoreMap(backupFile.datastore.long)
+            context.restoreMap(backupFile.datastore.stringSet)
         }
     }
 
@@ -252,8 +256,12 @@ object BackupUtils {
         map: Map<String, T>?,
         isEditingAppSettings: Boolean = false
     ) {
-        map?.filter { it.key.isTransferable() }?.forEach {
-            setKeyRaw(it.key, it.value, isEditingAppSettings)
+        val editor = DataStore.editor(this, isEditingAppSettings)
+        map?.forEach {
+            if (it.key.isTransferable()) {
+                editor.setKeyRaw(it.key, it.value)
+            }
         }
+        editor.apply()
     }
 }
